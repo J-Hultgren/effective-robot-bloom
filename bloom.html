@@ -94,7 +94,7 @@ const GRP={
   savings:{lbl:"Savings & Investing",col:"#88B098",ico:"🌱",split:"savings"},
   debt:{lbl:"Debt Payments",col:"#B8A898",ico:"💳",split:"savings"},
 };
-const CATS0_EXAMPLE=[
+const CATS0=[
   {id:"xe",lbl:"X-Energy (biweekly $4,440)",ico:"💼",g:"income",def:8880,inc:true,rec:false},
   {id:"tp_lc",lbl:"TerraPower – LC (weekly $2,080)",ico:"💼",g:"income",def:8320,inc:true,rec:false},
   {id:"tp_sc",lbl:"TerraPower – SCU (weekly $425)",ico:"💼",g:"income",def:1700,inc:true,rec:false},
@@ -130,7 +130,7 @@ const CATS0_EXAMPLE=[
   {id:"p_ca",lbl:"Citi AA",ico:"💳",g:"debt",def:325,rec:true},
   {id:"p_ci",lbl:"Citi",ico:"💳",g:"debt",def:233,rec:true},
 ];
-const DEBTS0_EXAMPLE=[
+const DEBTS0=[
   {id:"d1",name:"Avant",bal:28074,apr:33.1,min:1392,col:"#DEBCB5",ord:1,catId:"p_av"},
   {id:"d2",name:"Barclay",bal:16000,apr:29,min:671,col:"#C9A99A",ord:2,catId:"p_ba"},
   {id:"d3",name:"American Express",bal:14784,apr:29,min:393,col:"#D4B8A5",ord:3,catId:"p_ax"},
@@ -145,8 +145,8 @@ const DEBTS0_EXAMPLE=[
   {id:"d12",name:"Mortgage",bal:220149,apr:2.8,min:2500,col:"#7A9A80",ord:12,catId:"mort"},
 ];
 const ACCS0={
-  lc:{name:"Checking",bal:0,col:"#C9907A",type:"checking"},
-  sc:{name:"Savings",bal:0,col:"#7A9A80",type:"checking"},
+  lc:{name:"Main Checking (LC / X-Energy)",bal:3385,col:"#C9907A",type:"checking"},
+  sc:{name:"SCU Checking (TerraPower)",bal:1522.99,col:"#7A9A80",type:"checking"},
 };
 const ACC_COLS=["#C9907A","#7A9A80","#9A7890","#A8BDB8","#CFC4DC","#D4B8A5","#B5C9B8","#C4C4D4"];
 const ASSETS0=[
@@ -569,21 +569,12 @@ function App(){
   const initB=useCallback(cl=>Object.fromEntries(cl.map(c=>[c.id,c.def])),[]);
 
   // Budget state
-  const BLANK_CATS=[
-    {id:"inc1",lbl:"Monthly Income",ico:"💰",g:"income",def:0,inc:true,rec:false},
-    {id:"hous1",lbl:"Housing",ico:"🏠",g:"housing",def:0,rec:true},
-    {id:"food1",lbl:"Groceries",ico:"🛒",g:"family",def:0,rec:false,split:"needs"},
-    {id:"bill1",lbl:"Bills & Subscriptions",ico:"📄",g:"bills",def:0,rec:true},
-    {id:"hlth1",lbl:"Health",ico:"💊",g:"health",def:0,rec:false},
-    {id:"sav1",lbl:"Savings",ico:"🌱",g:"savings",def:0,rec:false},
-    {id:"debt1",lbl:"Debt Payments",ico:"💳",g:"debt",def:0,rec:true},
-  ];
-  const [cats,setCats]=useState(()=>BLANK_CATS.map(c=>({...c})));
-  const [budgets,setBudgets]=useState(()=>initB(BLANK_CATS));
+  const [cats,setCats]=useState(()=>CATS0.map(c=>({...c})));
+  const [budgets,setBudgets]=useState(()=>initB(CATS0));
   const [actuals,setActuals]=useState({});
   const [irregIncome,setIrregIncome]=useState(false);
   const [pastIncome,setPastIncome]=useState({m1:"",m2:"",m3:""});
-  const [debts,setDebts]=useState([]);
+  const [debts,setDebts]=useState(DEBTS0);
   const [dpays,setDpays]=useState({});
   const [editD,setEditD]=useState(null);
   const [newPay,setNewPay]=useState({did:"",amt:"",note:"",date:""});
@@ -598,8 +589,8 @@ function App(){
 
   // Ledger state
   const [txns,setTxns]=useState([]);
-  const [lcStart,setLcStart]=useState(0);
-  const [scuStart,setScuStart]=useState(0);
+  const [lcStart,setLcStart]=useState(3385);
+  const [scuStart,setScuStart]=useState(1522.99);
   const [lcReset,setLcReset]=useState(null);
   const [scuReset,setScuReset]=useState(null);
   const [recurringDebts,setRecurringDebts]=useState([]);
@@ -657,7 +648,7 @@ function App(){
         dbGet(`notes-${viewYear}-${viewMonth}`),dbGet("assets-v1"),dbGet("nw-hist-v1"),
         dbGet(`gpay-${viewYear}-${viewMonth}`),dbGet("irrinc-v1"),
       ]);
-      const lc=cR?.budgets?.cats||BLANK_CATS.map(c=>({...c}));setCats(lc);
+      const lc=cR?.budgets?.cats||CATS0.map(c=>({...c}));setCats(lc);
       const savedB=bR?.budgets||{},savedA=bR?.actuals||{};
       setBudgets({...initB(lc),...savedB});setActuals(savedA);
       if(dR?.budgets?.d){
