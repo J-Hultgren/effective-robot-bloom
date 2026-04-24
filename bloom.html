@@ -2034,7 +2034,7 @@ function RecurringTab({T,recurringDebts,addRecurring,editRecurring,delRecurring,
 }
 
 // ── Settings Tab ─────────────────────────────────────────────────
-function SettingsTab({T,onTheme,onName,userName,doExp,accs,onAcc,onAddAcc,onDelAcc,darkMode,setDarkMode,lcStart,scuStart,onStartChange,notes,onNotes}){
+function SettingsTab({T,onTheme,onName,userName,doExp,accs,onAcc,onAddAcc,onDelAcc,darkMode,setDarkMode,lcStart,scuStart,onStartChange,lcReset,scuReset,onResetChange,notes,onNotes}){
   const [localName,setLocalName]=useState(userName);
   return(
     <div>
@@ -2073,32 +2073,57 @@ function SettingsTab({T,onTheme,onName,userName,doExp,accs,onAcc,onAddAcc,onDelA
         </button>
       </Card>
 
-      {/* Account balances — unified: name + balance updates both ledger and budget */}
+      {/* Account balances — unified: name + balance + reset checkpoint */}
       <Card T={T} style={{padding:"13px 15px",marginBottom:12}}>
         <SL T={T}>Accounts</SL>
-        <div style={{fontSize:11,color:T.lt,marginBottom:10,lineHeight:1.5}}>Name and current balance for each account. Updates balances everywhere in the app.</div>
         {[
-          {ledgerKey:"lc",accKey:"lc",start:lcStart,name:accs.lc?.name||"Checking",col:T.a},
-          {ledgerKey:"scu",accKey:"sc",start:scuStart,name:accs.sc?.name||"Savings",col:T.a2},
+          {ledgerKey:"lc",accKey:"lc",start:lcStart,name:accs.lc?.name||"Checking",col:T.a,reset:lcReset},
+          {ledgerKey:"scu",accKey:"sc",start:scuStart,name:accs.sc?.name||"Savings",col:T.a2,reset:scuReset},
         ].map(a=>(
-          <div key={a.ledgerKey} style={{marginBottom:12,background:`${a.col}08`,borderRadius:12,padding:"10px 12px",border:`1px solid ${a.col}20`}}>
-            <div style={{fontSize:10,color:a.col,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Account {a.ledgerKey==="lc"?"1":"2"}</div>
-            <div style={{display:"flex",gap:8,marginBottom:8}}>
-              <input value={a.name}
-                onChange={e=>{
-                  const na={...accs,[a.accKey]:{...accs[a.accKey],name:e.target.value}};
-                  setAccs(na);sA(na);
-                }}
-                placeholder="Account name"
-                style={{flex:1,padding:"7px 10px",borderRadius:9,border:`1.5px solid ${a.col}30`,background:T.card,fontSize:13,color:T.text,outline:"none"}}/>
+          <div key={a.ledgerKey} style={{marginBottom:14,background:`${a.col}08`,borderRadius:14,padding:"12px 14px",border:`1px solid ${a.col}22`}}>
+            {/* Account name */}
+            <div style={{fontSize:10,color:a.col,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>{a.name||("Account "+(a.ledgerKey==="lc"?"1":"2"))}</div>
+            <input value={a.name}
+              onChange={e=>onAcc(a.accKey,'name',e.target.value)}
+              placeholder="Account name"
+              style={{width:"100%",padding:"7px 10px",borderRadius:9,border:`1.5px solid ${a.col}30`,background:T.card,fontSize:13,color:T.text,outline:"none",marginBottom:10,boxSizing:"border-box"}}/>
+
+            {/* Balance checkpoint — the "start tracking from" date */}
+            <div style={{fontSize:11,fontWeight:700,color:T.text,marginBottom:6}}>
+              📅 Start tracking from
             </div>
-            <div style={{position:"relative"}}>
-              <span style={{position:"absolute",left:9,top:"50%",transform:"translateY(-50%)",fontSize:13,color:a.col,fontWeight:700}}>$</span>
-              <input type="number" step="0.01" value={a.start}
-                onChange={e=>onStartChange(a.ledgerKey,e.target.value)}
-                placeholder="Current balance"
-                style={{width:"100%",padding:"8px 8px 8px 22px",borderRadius:9,border:`1.5px solid ${a.col}30`,background:T.card,fontSize:14,fontFamily:"'Cormorant Garamond',serif",fontWeight:700,color:a.col,outline:"none",boxSizing:"border-box"}}/>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+              <div>
+                <div style={{fontSize:9,color:T.lt,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.08em"}}>Date</div>
+                <input type="date" value={a.reset?.date||""} colorScheme={T.dark?"dark":"light"}
+                  onChange={e=>{
+                    const d=e.target.value;
+                    const obj=d?{date:d,balance:a.reset?.balance??a.start}:null;
+                    onResetChange(a.ledgerKey,obj);
+                  }}
+                  style={{width:"100%",padding:"7px 9px",borderRadius:9,border:`1.5px solid ${a.col}35`,background:T.card,fontSize:12,color:T.text,outline:"none",boxSizing:"border-box",colorScheme:T.dark?"dark":"light"}}/>
+              </div>
+              <div>
+                <div style={{fontSize:9,color:T.lt,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.08em"}}>Balance on that date</div>
+                <div style={{position:"relative"}}>
+                  <span style={{position:"absolute",left:8,top:"50%",transform:"translateY(-50%)",fontSize:12,color:a.col,fontWeight:700}}>$</span>
+                  <input type="number" step="0.01"
+                    value={a.reset?.balance??a.start}
+                    onChange={e=>{
+                      const obj={date:a.reset?.date||today(),balance:parseFloat(e.target.value)||0};
+                      onResetChange(a.ledgerKey,obj);
+                      onStartChange(a.ledgerKey,e.target.value);
+                    }}
+                    style={{width:"100%",padding:"7px 7px 7px 20px",borderRadius:9,border:`1.5px solid ${a.col}35`,background:T.card,fontSize:13,fontFamily:"'Cormorant Garamond',serif",fontWeight:700,color:a.col,outline:"none",boxSizing:"border-box"}}/>
+                </div>
+              </div>
             </div>
+            {a.reset?.date&&(
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 10px",background:`${a.col}14`,borderRadius:8,fontSize:11}}>
+                <span style={{color:T.text}}>✓ Showing transactions from <strong>{a.reset.date}</strong> onward</span>
+                <button onClick={()=>onResetChange(a.ledgerKey,null)} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontWeight:700}}>Clear</button>
+              </div>
+            )}
           </div>
         ))}
       </Card>
