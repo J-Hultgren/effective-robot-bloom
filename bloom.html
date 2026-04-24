@@ -625,13 +625,8 @@ function App(){
       setBudgets(freshB);setActuals({});sB(freshB,{});
       setDebts([]);sD([]);
     } else if(income>0){
-      // Keep example data but update first income cat to match what user entered
-      setCats(prev=>{
-        const updated=prev.map((c,i)=>c.inc&&i===0?{...c,def:income}:c);
-        const nb=Object.fromEntries(updated.map(c=>[c.id,c.inc&&updated.find(x=>x.id===c.id&&x===updated.find(y=>y.inc))===updated.find(x=>x.inc)?income:budgets[c.id]||c.def]));
-        setBudgets({...budgets,...Object.fromEntries(updated.filter(c=>c.inc).map((c,i)=>([c.id,i===0?income:0])))});
-        return updated;
-      });
+      const firstInc=cats.find(c=>c.inc);
+      if(firstInc){const nb={...budgets,[firstInc.id]:income};setBudgets(nb);sB(nb,actuals);}
     }
     setOnboarded(true);
   }
