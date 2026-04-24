@@ -653,16 +653,36 @@ function App(){
         dbGet(`notes-${viewYear}-${viewMonth}`),dbGet("assets-v1"),dbGet("nw-hist-v1"),
         dbGet(`gpay-${viewYear}-${viewMonth}`),dbGet("irrinc-v1"),
       ]);
-      const lc=cR?.budgets?.cats||CATS0.map(c=>({...c}));setCats(lc);
-      const savedB=bR?.budgets||{},savedA=bR?.actuals||{};
+      // Load cats — auto-restore from CATS0 if Supabase data looks blank/corrupted
+      const rawCats=cR?.budgets?.cats;
+      const catsLookValid=rawCats&&rawCats.length>=15&&rawCats.some(c=>!c.inc&&(c.def||0)>0);
+      const lc=catsLookValid?rawCats:CATS0.map(c=>({...c}));
+      setCats(lc);
+      if(!catsLookValid&&rawCats!==undefined){
+        // Silently fix corrupted cats in Supabase
+        dbSet("cats-v2",{budgets:{cats:lc}});
+      }
+
+      // Load budgets — clear corrupted income values (anything > $500k is wrong)
+      const rawB=bR?.budgets||{};
+      const cleanB={};
+      Object.entries(rawB).forEach(([k,v])=>{cleanB[k]=v>500000?0:v;});
+      const savedB=cleanB,savedA=bR?.actuals||{};
       setBudgets({...initB(lc),...savedB});setActuals(savedA);
-      if(dR?.budgets?.d){
+
+      // Load debts — auto-restore from DEBTS0 if empty or missing
+      if(dR?.budgets?.d&&dR.budgets.d.length>0){
         const restored=dR.budgets.d.map(d=>{
           if(d.catId)return d;
           const catId=resolveDebtCatId(d.name,lc);
           return catId?{...d,catId}:d;
         });
         setDebts(restored);
+      } else {
+        // No debts in Supabase — restore defaults
+        const defaultDebts=DEBTS0.map(d=>({...d}));
+        setDebts(defaultDebts);
+        dbSet("debts-v1",{budgets:{d:defaultDebts}});
       }
       setDpays(pR?.budgets?.p||{});
       if(aR?.budgets?.a)setAccs(aR.budgets.a);
