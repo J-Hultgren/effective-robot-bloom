@@ -296,6 +296,14 @@ function generateAutoTxns(year,month,recurringDebts,incomeStreams){
       result.push({id:"auto-inc-"+s.id+"-"+year+"-"+month,date:isoDate(year,month,Math.min(last.d,dim)),desc:s.name||"Paycheck",amount:amt,account:s.account||"lc",note:"Auto · monthly",isAuto:true,autoType:"income",catId:s.catId||null});
       return;
     }
+    // Fast-forward cursor to just before the start of the month
+    // using big jumps so we don't waste iterations on intervening weeks
+    if(cursor<start){
+      const msToStart=start.getTime()-cursor.getTime();
+      const stepsToSkip=Math.max(0,Math.floor(msToStart/(step*86400000))-1);
+      cursor=new Date(cursor.getTime()+stepsToSkip*step*86400000);
+    }
+    // Step back to just before month start, then forward into month
     while(cursor>end)cursor=new Date(cursor.getTime()-step*86400000);
     while(cursor>=start)cursor=new Date(cursor.getTime()-step*86400000);
     cursor=new Date(cursor.getTime()+step*86400000);
@@ -321,6 +329,11 @@ function calcMonthlyIncomeFromStreams(streams,year,month){
     if(freq==="monthly"){count=1;}
     else{
       let cursor=new Date(last.y,last.m,last.d);
+      if(cursor<start){
+        const msToStart=start.getTime()-cursor.getTime();
+        const stepsToSkip=Math.max(0,Math.floor(msToStart/(step*86400000))-1);
+        cursor=new Date(cursor.getTime()+stepsToSkip*step*86400000);
+      }
       while(cursor>end)cursor=new Date(cursor.getTime()-step*86400000);
       while(cursor>=start)cursor=new Date(cursor.getTime()-step*86400000);
       cursor=new Date(cursor.getTime()+step*86400000);
