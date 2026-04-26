@@ -645,7 +645,18 @@ function App(){
       if(perm!=="granted"){setPushStatus("Permission denied — go to browser settings and allow notifications for this site");return;}
       setPushStatus("Setting up…");
       if(!("serviceWorker" in navigator)){setPushStatus("Service worker not supported");return;}
-      const reg=await navigator.serviceWorker.ready;
+      // Register SW if not already registered
+      let reg;
+      try{
+        await navigator.serviceWorker.register("./sw.js");
+        reg=await Promise.race([
+          navigator.serviceWorker.ready,
+          new Promise((_,reject)=>setTimeout(()=>reject(new Error("Service worker timeout")),8000))
+        ]);
+      }catch(swErr){
+        // Try without service worker using simple push if available
+        setPushStatus("Error: "+swErr.message+" — try refreshing the page");return;
+      }
       const sub=await reg.pushManager.subscribe({
         userVisibleOnly:true,
         applicationServerKey:urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
