@@ -38,7 +38,7 @@ select,textarea{-webkit-appearance:none;appearance:none}
 const {useState,useEffect,useRef,useMemo,useCallback}=React;
 // Push notification config
 const VAPID_PUBLIC_KEY="BJffeaR43yspU6cT0k56iHAtAmepncgl4d5MK24NUskC-kpm1A_gsIbt9vwUApD24HzOEoR5820jD_cbpLttbu0";
-const PUSH_BACKEND_URL="https://bloom-push-om519djxv-j-hultgrens-projects.vercel.app";
+const PUSH_BACKEND_URL="https://bloom-push.vercel.app";
 function urlBase64ToUint8Array(b64){
   const pad=b64.length%4===0?b64:b64+"=".repeat(4-b64.length%4);
   const raw=atob(pad.replace(/-/g,"+").replace(/_/g,"/"));
