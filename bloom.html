@@ -402,6 +402,16 @@ const Btn=({T,children,onClick,style={},accent,outline,full,disabled})=>{
 function TxnForm({T,init,onSave,onCancel,title,cats,acctNames}){
   const [f,setF]=useState(()=>({date:today(),desc:"",amount:"",account:"lc",note:"",planned:false,catId:"",...(init||{})}));
   const [showP,setShowP]=useState(false);
+  useEffect(()=>{
+    function onPrefill(e){
+      const {amount,desc,account}=e.detail||{};
+      if(amount!==undefined)setF(x=>({...x,amount:String(amount)}));
+      if(desc)setF(x=>({...x,desc}));
+      if(account)setF(x=>({...x,account}));
+    }
+    window.addEventListener("bloom-prefill",onPrefill);
+    return()=>window.removeEventListener("bloom-prefill",onPrefill);
+  },[]);
   const isPos=parseFloat(f.amount)>=0;
   const expCats=cats?.filter(c=>!c.inc&&c.g!=="debt")||[];
   const incCats=cats?.filter(c=>c.inc)||[];
