@@ -733,6 +733,10 @@ function App(){
   const [notes,setNotes]=useState("");
   const [nwHist,setNwHist]=useState([]);
 
+  // Trades state
+  const [trades,setTrades]=useState([]);
+  const [tradeAcctStart]=useState(2000);
+
   // Ledger state
   const [txns,setTxns]=useState([]);
   const [lcStart,setLcStart]=useState(3385);
@@ -807,24 +811,21 @@ function App(){
         dbGet(`notes-${viewYear}-${viewMonth}`),dbGet("assets-v1"),dbGet("nw-hist-v1"),
         dbGet(`gpay-${viewYear}-${viewMonth}`),dbGet("irrinc-v1"),
       ]);
-      // Load cats — auto-restore from CATS0 if Supabase data looks blank/corrupted
+
+      // Cats — ONLY use what's in Supabase. Never auto-overwrite.
       const rawCats=cR?.budgets?.cats;
-      const catsLookValid=rawCats&&rawCats.length>=15&&rawCats.some(c=>!c.inc&&(c.def||0)>0);
-      const lc=catsLookValid?rawCats:CATS0.map(c=>({...c}));
+      const lc=rawCats&&rawCats.length>0?rawCats:CATS0.map(c=>({...c}));
       setCats(lc);
-      if(!catsLookValid&&rawCats!==undefined){
-        // Silently fix corrupted cats in Supabase
-        dbSet("cats-v2",{budgets:{cats:lc}});
-      }
 
-      // Load budgets — clear corrupted income values (anything > $500k is wrong)
-      const rawB=bR?.budgets||{};
-      const cleanB={};
-      Object.entries(rawB).forEach(([k,v])=>{cleanB[k]=v>500000?0:v;});
-      const savedB=cleanB,savedA=bR?.actuals||{};
-      setBudgets({...initB(lc),...savedB});setActuals(savedA);
+      // Budgets — load exactly what Supabase has, no overrides
+      const savedB=bR?.budgets||{};
+      const savedA=bR?.actuals||{};
+      // First time only: if nothing saved yet, use category defaults
+      const hasAnySaved=Object.keys(savedB).length>0;
+      setBudgets(hasAnySaved?savedB:initB(lc));
+      setActuals(savedA);
 
-      // Load debts — auto-restore from DEBTS0 if empty or missing
+      // Debts — load exactly what Supabase has, no auto-restore
       if(dR?.budgets?.d&&dR.budgets.d.length>0){
         const restored=dR.budgets.d.map(d=>{
           if(d.catId)return d;
@@ -832,12 +833,12 @@ function App(){
           return catId?{...d,catId}:d;
         });
         setDebts(restored);
-      } else {
-        // No debts in Supabase — restore defaults
-        const defaultDebts=DEBTS0.map(d=>({...d}));
-        setDebts(defaultDebts);
-        dbSet("debts-v1",{budgets:{d:defaultDebts}});
+      } else if(!dR){
+        // Nothing in Supabase at all (brand new user) — use defaults
+        setDebts(DEBTS0.map(d=>({...d})));
       }
+      // If dR exists but is empty array, respect that — user may have deleted all debts
+
       setDpays(pR?.budgets?.p||{});
       if(aR?.budgets?.a)setAccs(aR.budgets.a);
       if(gR?.budgets?.g)setGoals(gR.budgets.g);
@@ -851,7 +852,8 @@ function App(){
   }
   async function loadLedger(){
     try{
-      const[tR,sR,rR,iR]=await Promise.all([dbGet("lgr-txns"),dbGet("lgr-settings"),dbGet("lgr-recurring"),dbGet("lgr-income")]);
+      const[tR,sR,rR,iR,trR]=await Promise.all([dbGet("lgr-txns"),dbGet("lgr-settings"),dbGet("lgr-recurring"),dbGet("lgr-income"),dbGet("trades-v1")]);
+      if(trR?.budgets?.trades)setTrades(trR.budgets.trades);
       if(tR?.budgets?.txns)setTxns(tR.budgets.txns);
       if(sR?.budgets){
         if(sR.budgets.lcStart!=null)setLcStart(sR.budgets.lcStart);
@@ -1151,6 +1153,12 @@ function App(){
   function editIncome(s){const l=incomeStreams.map(x=>x.id===s.id?s:x);setIncomeStreams(l);saveIncome(l);syncIncomeToBudget(l,budgets,actuals);}
   function delIncome(id){const l=incomeStreams.filter(x=>x.id!==id);setIncomeStreams(l);saveIncome(l);syncIncomeToBudget(l,budgets,actuals);}
 
+  // Trade handlers
+  const sTrades=t=>sv("tr",()=>dbSet("trades-v1",{budgets:{trades:t}}));
+  function addTrade(t){const l=[t,...trades];setTrades(l);sTrades(l);}
+  function editTrade(t){const l=trades.map(x=>x.id===t.id?t:x);setTrades(l);sTrades(l);}
+  function delTrade(id){if(!confirm("Delete trade?"))return;const l=trades.filter(x=>x.id!==id);setTrades(l);sTrades(l);}
+
   // Derived totals
   const totInc=useMemo(()=>{
     if(irregIncome&&effectiveIncome)return effectiveIncome;
@@ -1192,7 +1200,7 @@ function App(){
 
   const sl={idle:"",saving:"Saving…",saved:"✓ Synced",error:"⚠ Error"}[sync];
   const sc={idle:"transparent",saving:T.a,saved:T.a2,error:T.danger}[sync];
-  const NAV=[{id:"dashboard",lbl:"Home",ico:"🏠"},{id:"calendar",lbl:"Calendar",ico:"📅"},{id:"ledger",lbl:"Ledger",ico:"📒"},{id:"budget",lbl:"Budget",ico:"📊"},{id:"plan",lbl:"Plan",ico:"🎯"}];
+  const NAV=[{id:"dashboard",lbl:"Home",ico:"🏠"},{id:"calendar",lbl:"Calendar",ico:"📅"},{id:"ledger",lbl:"Ledger",ico:"📒"},{id:"budget",lbl:"Budget",ico:"📊"},{id:"trades",lbl:"Trades",ico:"📈"},{id:"plan",lbl:"Plan",ico:"🎯"}];
 
   // Derive short display names from user's account names
   const acctNames=useMemo(()=>({
@@ -1227,6 +1235,7 @@ function App(){
     lcReset,scuReset,onResetChange:(acct,obj)=>{if(acct==="lc"){setLcReset(obj);saveSettings(lcStart,scuStart,obj,scuReset);}else{setScuReset(obj);saveSettings(lcStart,scuStart,lcReset,obj);}},
     lastLc,lastScu,actualLastLc,actualLastScu,actualWithBal,monthSummary,darkMode,setDarkMode,
     doExp:()=>doExport(cats,budgets,actuals,goals,assets,totDebt,viewMonth,viewYear,notes),
+    trades,addTrade,editTrade,delTrade,tradeAcctStart,
     pushEnabled,pushStatus,enablePushNotifications,disablePushNotifications,
     onRestoreDefaults,
     planTab,setPlanTab,
@@ -1280,6 +1289,7 @@ function App(){
           :tab==="calendar"?<CalendarPage {...shared}/>
           :tab==="ledger"?<LedgerPage {...shared}/>
           :tab==="budget"?<BudgetPage {...shared}/>
+          :tab==="trades"?<TradesPage {...shared}/>
           :<PlanPage {...shared}/>
         }
       </div>
@@ -2563,6 +2573,350 @@ function SettingsTab({T,onTheme,onName,userName,doExp,onRestoreDefaults,accs,onA
       <button onClick={()=>{if(confirm("Reset setup wizard? This will walk you through account setup again on next load.\n\nYour data will not be deleted.")){localStorage.removeItem("bloomOnboarded");window.location.reload();}}} style={{width:"100%",padding:"9px",borderRadius:11,border:`1px solid ${T.div}`,background:"transparent",fontSize:12,color:T.lt,cursor:"pointer",marginBottom:20}}>
         ↺ Re-run setup wizard
       </button>
+    </div>
+  );
+}
+
+
+// ════════════════════════════════════════════════════════════════
+//  TRADES PAGE
+// ════════════════════════════════════════════════════════════════
+const CHECKLIST_ITEMS=[
+  {id:"level",ico:"📍",lbl:"At support/resistance"},
+  {id:"iqcp",ico:"📊",lbl:"IQCP above 65 or below 35"},
+  {id:"candle",ico:"🕯️",lbl:"Confirming candle"},
+  {id:"ema",ico:"📈",lbl:"Right side of EMA5"},
+  {id:"stop",ico:"🛡️",lbl:"Stop calculated"},
+  {id:"target",ico:"🎯",lbl:"Target 2x stop"},
+  {id:"news",ico:"📰",lbl:"No news/reports pending"},
+];
+const SETUPS=["Pressure Breakout","Pressure Reversal","EMA Bounce","Support/Resistance","Trend Follow","Other"];
+const SESSIONS=["Open (9:30-11)","Mid-Day (11-2)","Power Hour (2-4)","After Hours"];
+
+function TradesPage({T,trades,addTrade,editTrade,delTrade,tradeAcctStart}){
+  const blank={id:"",date:new Date().toISOString().split("T")[0],time:"",contract:"MCLK6",
+    direction:"Long",contracts:1,entryPrice:"",exitPrice:"",entryPressure:"",exitPressure:"",
+    emaPosition:"Above",setup:"Pressure Breakout",session:"Open (9:30-11)",pnl:"",notes:"",
+    checklist:{}};
+  const [form,setForm]=useState(null);
+  const [editId,setEditId]=useState(null);
+  const [activeTab,setActiveTab]=useState("log");
+  const F=form||{};
+
+  function calcPnl(entry,exit,dir,contracts){
+    const e=parseFloat(entry),x=parseFloat(exit),c=parseInt(contracts)||1;
+    if(!e||!x)return"";
+    const ticks=Math.round((x-e)/0.01)*(dir==="Long"?1:-1);
+    return(ticks*c*1).toFixed(2);
+  }
+
+  function openNew(){setForm({...blank,id:Date.now().toString()});setEditId(null);}
+  function openEdit(t){setForm({...t});setEditId(t.id);}
+  function toggleCheck(id){setForm(f=>({...f,checklist:{...f.checklist,[id]:!f.checklist?.[id]}}));}
+
+  function saveForm(){
+    if(!F.entryPrice||!F.exitPrice)return;
+    const pnl=F.pnl||calcPnl(F.entryPrice,F.exitPrice,F.direction,F.contracts);
+    const result=parseFloat(pnl)>0?"Win":parseFloat(pnl)<0?"Loss":"Scratch";
+    const t={...F,pnl,result};
+    if(editId)editTrade(t);else addTrade(t);
+    setForm(null);setEditId(null);
+  }
+
+  // Stats
+  const wins=trades.filter(t=>t.result==="Win");
+  const losses=trades.filter(t=>t.result==="Loss");
+  const totalPnl=trades.reduce((s,t)=>s+(parseFloat(t.pnl)||0),0);
+  const balance=tradeAcctStart+totalPnl;
+  const winRate=trades.length>0?Math.round(wins.length/trades.length*100):0;
+  const avgWin=wins.length>0?wins.reduce((s,t)=>s+(parseFloat(t.pnl)||0),0)/wins.length:0;
+  const avgLoss=losses.length>0?Math.abs(losses.reduce((s,t)=>s+(parseFloat(t.pnl)||0),0)/losses.length):0;
+  const profitFactor=avgLoss>0?(avgWin*wins.length)/(avgLoss*losses.length):0;
+  const goal=5000;
+  const goalPct=Math.min(100,Math.round((balance-tradeAcctStart)/(goal-tradeAcctStart)*100));
+
+  // Equity curve points
+  let running=tradeAcctStart;
+  const curve=[...trades].reverse().map(t=>{running+=parseFloat(t.pnl)||0;return running;});
+
+  const inp={width:"100%",padding:"8px 10px",borderRadius:9,border:`1.5px solid ${T.a}28`,background:`${T.a}08`,color:T.text,fontSize:13,outline:"none",boxSizing:"border-box"};
+
+  return(
+    <div className="fade">
+      {/* Stats strip */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+        {[
+          {lbl:"Balance",v:`$${balance.toFixed(0)}`,c:balance>=tradeAcctStart?T.a2:T.danger},
+          {lbl:`W${wins.length}/L${losses.length} · ${winRate}%`,v:"Win Rate",c:winRate>=55?T.a2:T.lt,flip:true},
+          {lbl:"Total P&L",v:`${totalPnl>=0?"+":""}$${totalPnl.toFixed(2)}`,c:totalPnl>=0?T.a2:T.danger},
+        ].map((s,i)=>(
+          <div key={i} style={{background:T.card,borderRadius:12,padding:"10px 8px",border:`1px solid ${T.border}`,textAlign:"center"}}>
+            <div style={{fontSize:9,color:T.lt,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:3}}>{s.flip?s.v:s.lbl}</div>
+            <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:700,color:s.c}}>{s.flip?s.lbl:s.v}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Goal tracker */}
+      <div style={{background:T.card,borderRadius:12,padding:"10px 14px",border:`1px solid ${T.border}`,marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.lt,marginBottom:5}}>
+          <span>🎯 Goal: $2,000 → $5,000</span>
+          <span style={{color:T.a2,fontWeight:700}}>{goalPct}%</span>
+        </div>
+        <div style={{height:6,background:T.div,borderRadius:99,overflow:"hidden"}}>
+          <div style={{height:"100%",width:`${Math.max(0,goalPct)}%`,background:`linear-gradient(90deg,${T.a},${T.a2})`,borderRadius:99,transition:"width .5s"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:T.lt,marginTop:3}}>
+          <span>$2,000</span><span>$5,000</span>
+        </div>
+      </div>
+
+      {/* Sub tabs */}
+      <div style={{display:"flex",gap:0,marginBottom:12,background:T.card,borderRadius:12,padding:"3px",border:`1px solid ${T.border}`}}>
+        {[["log","📋 Log"],["stats","📊 Stats"],["new","➕ New Trade"]].map(([id,lbl])=>(
+          <button key={id} onClick={()=>{setActiveTab(id);if(id==="new")openNew();}}
+            style={{flex:1,padding:"7px",borderRadius:9,border:"none",background:activeTab===id?`${T.a}20`:"transparent",fontSize:12,fontWeight:activeTab===id?700:400,color:activeTab===id?T.a:T.lt,cursor:"pointer"}}>
+            {lbl}
+          </button>
+        ))}
+      </div>
+
+      {/* Trade form */}
+      {(activeTab==="new"||editId)&&form&&(
+        <div style={{background:T.card,borderRadius:16,padding:"16px",border:`1.5px solid ${T.a}30`,marginBottom:14}}>
+          <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:700,color:T.text,marginBottom:12}}>{editId?"Edit Trade":"New Trade"}</div>
+
+          {/* Pre-trade checklist */}
+          <div style={{background:`${T.a}08`,borderRadius:12,padding:"12px",marginBottom:12,border:`1px solid ${T.a}20`}}>
+            <div style={{fontSize:11,fontWeight:700,color:T.a,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.08em"}}>Pre-Trade Checklist</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+              {CHECKLIST_ITEMS.map(item=>{
+                const checked=F.checklist?.[item.id];
+                return(
+                  <button key={item.id} onClick={()=>toggleCheck(item.id)}
+                    style={{display:"flex",alignItems:"center",gap:6,padding:"7px 9px",borderRadius:9,border:`1.5px solid ${checked?T.a2+"60":T.div}`,background:checked?`${T.a2}14`:"transparent",cursor:"pointer",textAlign:"left",transition:"all .15s"}}>
+                    <span style={{fontSize:13}}>{checked?"✅":item.ico}</span>
+                    <span style={{fontSize:11,color:checked?T.a2:T.lt,fontWeight:checked?700:400,lineHeight:1.3}}>{item.lbl}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{marginTop:8,fontSize:11,color:T.lt}}>
+              {Object.values(F.checklist||{}).filter(Boolean).length}/{CHECKLIST_ITEMS.length} checks ·{" "}
+              <span style={{color:Object.values(F.checklist||{}).filter(Boolean).length>=6?T.a2:T.warn,fontWeight:700}}>
+                {Object.values(F.checklist||{}).filter(Boolean).length>=6?"✓ Ready to trade":"⚠ Check more items"}
+              </span>
+            </div>
+          </div>
+
+          {/* Date/time/contract */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7,marginBottom:9}}>
+            <div><div style={{fontSize:9,color:T.lt,marginBottom:3}}>Date</div>
+              <input type="date" value={F.date||""} onChange={e=>setForm(f=>({...f,date:e.target.value}))} style={{...inp,fontSize:11,colorScheme:T.dark?"dark":"light"}}/></div>
+            <div><div style={{fontSize:9,color:T.lt,marginBottom:3}}>Time</div>
+              <input type="time" value={F.time||""} onChange={e=>setForm(f=>({...f,time:e.target.value}))} style={{...inp,fontSize:11,colorScheme:T.dark?"dark":"light"}}/></div>
+            <div><div style={{fontSize:9,color:T.lt,marginBottom:3}}>Contract</div>
+              <input value={F.contract||""} onChange={e=>setForm(f=>({...f,contract:e.target.value}))} style={inp}/></div>
+          </div>
+
+          {/* Direction + size */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:9}}>
+            <div><div style={{fontSize:9,color:T.lt,marginBottom:3}}>Direction</div>
+              <div style={{display:"flex",gap:5}}>
+                {["Long","Short"].map(d=>(
+                  <button key={d} onClick={()=>setForm(f=>({...f,direction:d}))}
+                    style={{flex:1,padding:"8px",borderRadius:9,border:`1.5px solid ${F.direction===d?(d==="Long"?T.a2:T.danger)+"60":T.div}`,background:F.direction===d?(d==="Long"?T.a2:T.danger)+"18":"transparent",fontSize:13,fontWeight:F.direction===d?700:400,color:F.direction===d?(d==="Long"?T.a2:T.danger):T.lt,cursor:"pointer"}}>
+                    {d==="Long"?"📈 Long":"📉 Short"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div><div style={{fontSize:9,color:T.lt,marginBottom:3}}>Contracts</div>
+              <input type="number" min="1" value={F.contracts||1} onChange={e=>setForm(f=>({...f,contracts:e.target.value}))} style={inp}/></div>
+          </div>
+
+          {/* Entry/exit prices */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:9}}>
+            {[{lbl:"Entry Price",k:"entryPrice"},{lbl:"Exit Price",k:"exitPrice"}].map(({lbl,k})=>(
+              <div key={k}><div style={{fontSize:9,color:T.lt,marginBottom:3}}>{lbl}</div>
+                <input type="number" step="0.01" value={F[k]||""} onChange={e=>{
+                  const v=e.target.value;
+                  const newF={...form,[k]:v};
+                  const pnl=calcPnl(k==="entryPrice"?v:newF.entryPrice,k==="exitPrice"?v:newF.exitPrice,newF.direction,newF.contracts);
+                  setForm({...newF,pnl});
+                }} style={{...inp,fontFamily:"'Cormorant Garamond',serif",fontWeight:700,fontSize:15}}/></div>
+            ))}
+          </div>
+
+          {/* Auto P&L display */}
+          {F.pnl&&<div style={{textAlign:"center",marginBottom:9,padding:"10px",borderRadius:11,background:parseFloat(F.pnl)>=0?`${T.a2}12`:`${T.danger}10`,border:`1.5px solid ${parseFloat(F.pnl)>=0?T.a2:T.danger}35`}}>
+            <div style={{fontSize:10,color:T.lt,marginBottom:2}}>P&L</div>
+            <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:26,fontWeight:700,color:parseFloat(F.pnl)>=0?T.a2:T.danger}}>{parseFloat(F.pnl)>=0?"+":""}${parseFloat(F.pnl).toFixed(2)}</div>
+            <div style={{fontSize:10,color:T.lt,marginTop:2}}>{parseFloat(F.pnl)>=0?"Win 🏆":parseFloat(F.pnl)<0?"Loss 📉":"Scratch"}</div>
+          </div>}
+
+          {/* IQCP readings */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7,marginBottom:9}}>
+            <div><div style={{fontSize:9,color:T.lt,marginBottom:3}}>Entry Pressure</div>
+              <input type="number" step="1" min="0" max="100" placeholder="e.g. 68" value={F.entryPressure||""} onChange={e=>setForm(f=>({...f,entryPressure:e.target.value}))} style={{...inp,color:parseInt(F.entryPressure)>=65?T.a2:parseInt(F.entryPressure)<=35?T.danger:T.text}}/></div>
+            <div><div style={{fontSize:9,color:T.lt,marginBottom:3}}>Exit Pressure</div>
+              <input type="number" step="1" min="0" max="100" placeholder="e.g. 42" value={F.exitPressure||""} onChange={e=>setForm(f=>({...f,exitPressure:e.target.value}))} style={inp}/></div>
+            <div><div style={{fontSize:9,color:T.lt,marginBottom:3}}>EMA Position</div>
+              <div style={{display:"flex",gap:4}}>
+                {["Above","Below"].map(v=>(
+                  <button key={v} onClick={()=>setForm(f=>({...f,emaPosition:v}))}
+                    style={{flex:1,padding:"7px 4px",borderRadius:8,border:`1.5px solid ${F.emaPosition===v?T.a+"60":T.div}`,background:F.emaPosition===v?`${T.a}18`:"transparent",fontSize:11,fontWeight:F.emaPosition===v?700:400,color:F.emaPosition===v?T.a:T.lt,cursor:"pointer"}}>
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Setup + session */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:9}}>
+            <div><div style={{fontSize:9,color:T.lt,marginBottom:3}}>Setup</div>
+              <select value={F.setup||""} onChange={e=>setForm(f=>({...f,setup:e.target.value}))} style={{...inp,colorScheme:T.dark?"dark":"light"}}>
+                {SETUPS.map(s=><option key={s}>{s}</option>)}
+              </select>
+            </div>
+            <div><div style={{fontSize:9,color:T.lt,marginBottom:3}}>Session</div>
+              <select value={F.session||""} onChange={e=>setForm(f=>({...f,session:e.target.value}))} style={{...inp,colorScheme:T.dark?"dark":"light"}}>
+                {SESSIONS.map(s=><option key={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:9,color:T.lt,marginBottom:3}}>Notes — What went right or wrong?</div>
+            <textarea value={F.notes||""} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} rows={2}
+              style={{...inp,resize:"none",fontFamily:"'Lato',sans-serif"}}/>
+          </div>
+
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={saveForm} style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:`linear-gradient(135deg,${T.a},${T.a2})`,color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+              {editId?"Update Trade ✓":"Save Trade ✓"}
+            </button>
+            <button onClick={()=>{setForm(null);setEditId(null);setActiveTab("log");}} style={{flex:1,padding:"12px",borderRadius:12,border:`1px solid ${T.div}`,background:"transparent",fontSize:13,color:T.lt,cursor:"pointer"}}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Trade log */}
+      {activeTab==="log"&&!editId&&(
+        <div>
+          {trades.length===0&&<div style={{textAlign:"center",padding:"40px 20px"}}>
+            <div style={{fontSize:36,marginBottom:10}}>📈</div>
+            <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,color:T.text,marginBottom:6}}>No trades yet</div>
+            <div style={{fontSize:12,color:T.lt}}>Tap "+ New Trade" to log your first MCLK6 trade.</div>
+          </div>}
+          {trades.map((t,i)=>{
+            const pnl=parseFloat(t.pnl)||0;
+            const checks=Object.values(t.checklist||{}).filter(Boolean).length;
+            return(
+              <div key={t.id} style={{background:T.card,borderRadius:14,padding:"12px 14px",border:`1.5px solid ${pnl>0?T.a2+"30":pnl<0?T.danger+"25":T.border}`,marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+                  <div>
+                    <div style={{display:"flex",alignItems:"center",gap:7}}>
+                      <span style={{fontSize:12,fontWeight:700,color:t.direction==="Long"?T.a2:T.danger}}>{t.direction==="Long"?"📈":"📉"} {t.contract}</span>
+                      <span style={{fontSize:11,color:T.lt}}>{t.date} {t.time}</span>
+                    </div>
+                    <div style={{fontSize:11,color:T.lt,marginTop:2}}>{t.setup} · {t.session}</div>
+                    {checks>0&&<div style={{fontSize:10,color:T.a2,marginTop:2}}>{checks}/{CHECKLIST_ITEMS.length} checklist ✓</div>}
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:700,color:pnl>0?T.a2:pnl<0?T.danger:T.lt}}>{pnl>0?"+":""}${pnl.toFixed(2)}</div>
+                    <div style={{fontSize:10,color:T.lt}}>{t.result} · {t.contracts}c</div>
+                  </div>
+                </div>
+                {t.entryPressure&&<div style={{fontSize:10,color:T.lt,marginBottom:5}}>IQCP: {t.entryPressure} → {t.exitPressure||"?"} · EMA {t.emaPosition}</div>}
+                {t.notes&&<div style={{fontSize:11,color:T.sub,fontStyle:"italic",marginBottom:6}}>"{t.notes}"</div>}
+                <div style={{display:"flex",gap:6}}>
+                  <button onClick={()=>{openEdit(t);setActiveTab("new");}} style={{fontSize:11,padding:"4px 10px",borderRadius:8,border:`1px solid ${T.a}30`,background:`${T.a}10`,color:T.a,cursor:"pointer"}}>✏️ Edit</button>
+                  <button onClick={()=>delTrade(t.id)} style={{fontSize:11,padding:"4px 10px",borderRadius:8,border:`1px solid ${T.danger}28`,background:`${T.danger}08`,color:T.danger,cursor:"pointer"}}>× Delete</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Stats tab */}
+      {activeTab==="stats"&&(
+        <div>
+          {/* Equity curve */}
+          {curve.length>1&&(
+            <div style={{background:T.card,borderRadius:14,padding:"14px",border:`1px solid ${T.border}`,marginBottom:12}}>
+              <div style={{fontSize:11,fontWeight:700,color:T.text,marginBottom:10}}>Equity Curve</div>
+              <div style={{position:"relative",height:80}}>
+                <svg width="100%" height="80" style={{overflow:"visible"}}>
+                  {/* Baseline */}
+                  <line x1="0" y1="60" x2="100%" y2="60" stroke={T.div} strokeWidth="1" strokeDasharray="4"/>
+                  {/* Curve */}
+                  {(()=>{
+                    const all=[tradeAcctStart,...curve];
+                    const mn=Math.min(...all),mx=Math.max(...all);const r=mx-mn||100;
+                    const pts=all.map((v,i)=>`${(i/(all.length-1))*100}%,${70-(v-mn)/r*65}`).join(" L ");
+                    return <polyline points={pts} fill="none" stroke={totalPnl>=0?T.a2:T.danger} strokeWidth="2" vectorEffect="non-scaling-stroke"/>;
+                  })()}
+                </svg>
+              </div>
+            </div>
+          )}
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+            {[
+              {lbl:"Avg Winner",v:`$${avgWin.toFixed(2)}`,c:T.a2},
+              {lbl:"Avg Loser",v:`-$${avgLoss.toFixed(2)}`,c:T.danger},
+              {lbl:"Profit Factor",v:profitFactor>0?profitFactor.toFixed(2):"—",c:profitFactor>=1.5?T.a2:T.lt},
+              {lbl:"Total Trades",v:trades.length,c:T.text},
+            ].map((s,i)=>(
+              <div key={i} style={{background:T.card,borderRadius:12,padding:"11px 13px",border:`1px solid ${T.border}`}}>
+                <div style={{fontSize:9,color:T.lt,marginBottom:3,textTransform:"uppercase",letterSpacing:"0.08em"}}>{s.lbl}</div>
+                <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:700,color:s.c}}>{s.v}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* By setup */}
+          {SETUPS.filter(s=>trades.some(t=>t.setup===s)).length>0&&(
+            <div style={{background:T.card,borderRadius:14,padding:"13px",border:`1px solid ${T.border}`,marginBottom:12}}>
+              <div style={{fontSize:11,fontWeight:700,color:T.text,marginBottom:9}}>By Setup</div>
+              {SETUPS.filter(s=>trades.some(t=>t.setup===s)).map(s=>{
+                const st=trades.filter(t=>t.setup===s);
+                const w=st.filter(t=>t.result==="Win").length;
+                const p=st.reduce((sum,t)=>sum+(parseFloat(t.pnl)||0),0);
+                return(
+                  <div key={s} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7,paddingBottom:7,borderBottom:`1px solid ${T.div}`}}>
+                    <div><div style={{fontSize:12,fontWeight:600,color:T.text}}>{s}</div>
+                    <div style={{fontSize:10,color:T.lt}}>{st.length} trades · {Math.round(w/st.length*100)}% win</div></div>
+                    <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:700,color:p>=0?T.a2:T.danger}}>{p>=0?"+":""}${p.toFixed(2)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* By session */}
+          {SESSIONS.filter(s=>trades.some(t=>t.session===s)).length>0&&(
+            <div style={{background:T.card,borderRadius:14,padding:"13px",border:`1px solid ${T.border}`,marginBottom:20}}>
+              <div style={{fontSize:11,fontWeight:700,color:T.text,marginBottom:9}}>By Session</div>
+              {SESSIONS.filter(s=>trades.some(t=>t.session===s)).map(s=>{
+                const st=trades.filter(t=>t.session===s);
+                const p=st.reduce((sum,t)=>sum+(parseFloat(t.pnl)||0),0);
+                return(
+                  <div key={s} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7,paddingBottom:7,borderBottom:`1px solid ${T.div}`}}>
+                    <div><div style={{fontSize:12,fontWeight:600,color:T.text}}>{s}</div>
+                    <div style={{fontSize:10,color:T.lt}}>{st.length} trades</div></div>
+                    <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:700,color:p>=0?T.a2:T.danger}}>{p>=0?"+":""}${p.toFixed(2)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
