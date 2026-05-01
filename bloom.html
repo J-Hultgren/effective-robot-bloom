@@ -782,12 +782,12 @@ function App(){
     }
     setOnboarded(true);
     // Trigger data loads now that onboarding is done
-    setTimeout(()=>{loadBudget();loadLedger();},50);
+    setTimeout(()=>{loadGlobalData();loadMonthData();loadLedger();},50);
   }
 
   // Load all data — only after onboarding is complete
-  useEffect(()=>{if(onboarded)loadBudget();},[viewMonth,viewYear,onboarded]);
-  useEffect(()=>{if(onboarded)loadLedger();},[onboarded]);
+  useEffect(()=>{if(onboarded)loadMonthData();},[viewMonth,viewYear,onboarded]);
+  useEffect(()=>{if(onboarded){loadGlobalData();loadLedger();}},[onboarded]);
   // Sync income to budget whenever month changes or streams change
   useEffect(()=>{
     if(!onboarded||incomeStreams.length===0)return;
@@ -802,30 +802,17 @@ function App(){
   },[viewMonth,viewYear,incomeStreams,onboarded]);
 
 
-  async function loadBudget(){
+  // loadGlobalData — runs ONCE on startup. Loads month-independent data.
+  async function loadGlobalData(){
     setLoad(true);
     try{
-      const[bR,dR,pR,aR,cR,gR,nR,asR,nwR,gpR,irR]=await Promise.all([
-        dbGet(`bud-${viewYear}-${viewMonth}`),dbGet("debts-v1"),dbGet(`dpay-${viewYear}-${viewMonth}`),
-        dbGet("accs-v1"),dbGet("cats-v2"),dbGet("goals-v2"),
-        dbGet(`notes-${viewYear}-${viewMonth}`),dbGet("assets-v1"),dbGet("nw-hist-v1"),
-        dbGet(`gpay-${viewYear}-${viewMonth}`),dbGet("irrinc-v1"),
+      const[dR,aR,cR,gR,asR,nwR,irR]=await Promise.all([
+        dbGet("debts-v1"),dbGet("accs-v1"),dbGet("cats-v2"),dbGet("goals-v2"),
+        dbGet("assets-v1"),dbGet("nw-hist-v1"),dbGet("irrinc-v1"),
       ]);
-
-      // Cats — ONLY use what's in Supabase. Never auto-overwrite.
       const rawCats=cR?.budgets?.cats;
       const lc=rawCats&&rawCats.length>0?rawCats:CATS0.map(c=>({...c}));
       setCats(lc);
-
-      // Budgets — load exactly what Supabase has, no overrides
-      const savedB=bR?.budgets||{};
-      const savedA=bR?.actuals||{};
-      // First time only: if nothing saved yet, use category defaults
-      const hasAnySaved=Object.keys(savedB).length>0;
-      setBudgets(hasAnySaved?savedB:initB(lc));
-      setActuals(savedA);
-
-      // Debts — load exactly what Supabase has, no auto-restore
       if(dR?.budgets?.d&&dR.budgets.d.length>0){
         const restored=dR.budgets.d.map(d=>{
           if(d.catId)return d;
@@ -834,21 +821,35 @@ function App(){
         });
         setDebts(restored);
       } else if(!dR){
-        // Nothing in Supabase at all (brand new user) — use defaults
         setDebts(DEBTS0.map(d=>({...d})));
       }
-      // If dR exists but is empty array, respect that — user may have deleted all debts
-
-      setDpays(pR?.budgets?.p||{});
       if(aR?.budgets?.a)setAccs(aR.budgets.a);
       if(gR?.budgets?.g)setGoals(gR.budgets.g);
-      setNotes(nR?.budgets?.notes||"");
       if(asR?.budgets?.as)setAssets(asR.budgets.as);
       if(nwR?.budgets?.h)setNwHist(nwR.budgets.h);
-      setGoalPays(gpR?.budgets?.p||{});
       if(irR?.budgets?.ir){setIrregIncome(irR.budgets.ir.on||false);setPastIncome(irR.budgets.ir.past||{m1:"",m2:"",m3:""});}
     }catch(e){console.error(e);}
     setLoad(false);
+  }
+
+  // loadMonthData — runs when month/year changes. Only loads month-specific data.
+  async function loadMonthData(){
+    try{
+      const[bR,pR,nR,gpR]=await Promise.all([
+        dbGet(`bud-${viewYear}-${viewMonth}`),
+        dbGet(`dpay-${viewYear}-${viewMonth}`),
+        dbGet(`notes-${viewYear}-${viewMonth}`),
+        dbGet(`gpay-${viewYear}-${viewMonth}`),
+      ]);
+      const savedB=bR?.budgets||{};
+      const savedA=bR?.actuals||{};
+      const hasAnySaved=Object.keys(savedB).length>0;
+      setBudgets(hasAnySaved?savedB:initB(cats));
+      setActuals(savedA);
+      setDpays(pR?.budgets?.p||{});
+      setNotes(nR?.budgets?.notes||"");
+      setGoalPays(gpR?.budgets?.p||{});
+    }catch(e){console.error(e);}
   }
   async function loadLedger(){
     try{
@@ -866,9 +867,43 @@ function App(){
     }catch(e){console.error(e);}
   }
 
+  // Pending saves map — key → async save function
+  const pending=useRef({});
+
   const sv=useCallback((k,fn)=>{
+    // Store the latest version of this save
+    pending.current[k]=fn;
     clearTimeout(tmr.current[k]);
-    tmr.current[k]=setTimeout(async()=>{setSync("saving");try{await fn();setSync("saved");setTimeout(()=>setSync("idle"),2500);}catch{setSync("error");}},700);
+    tmr.current[k]=setTimeout(async()=>{
+      const f=pending.current[k];
+      if(!f)return;
+      delete pending.current[k];
+      setSync("saving");
+      try{await f();setSync("saved");setTimeout(()=>setSync("idle"),2500);}
+      catch{setSync("error");}
+    },300); // reduced from 700ms to 300ms
+  },[]);
+
+  // Flush all pending saves immediately when app loses focus or user navigates away
+  useEffect(()=>{
+    async function flushAll(){
+      const fns=Object.values(pending.current);
+      if(!fns.length)return;
+      pending.current={};
+      Object.values(tmr.current).forEach(t=>clearTimeout(t));
+      tmr.current={};
+      await Promise.all(fns.map(f=>f().catch(()=>{})));
+    }
+    function onVisibilityChange(){if(document.visibilityState==="hidden")flushAll();}
+    function onBeforeUnload(){flushAll();}
+    document.addEventListener("visibilitychange",onVisibilityChange);
+    window.addEventListener("pagehide",onBeforeUnload);
+    window.addEventListener("beforeunload",onBeforeUnload);
+    return()=>{
+      document.removeEventListener("visibilitychange",onVisibilityChange);
+      window.removeEventListener("pagehide",onBeforeUnload);
+      window.removeEventListener("beforeunload",onBeforeUnload);
+    };
   },[]);
 
   // Budget save helpers
