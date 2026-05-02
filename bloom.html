@@ -1090,6 +1090,55 @@ function App(){
   const lastScu=withBal.length?withBal[withBal.length-1].scuNow:scuStart;
   const actualLastLc=actualWithBal.length?actualWithBal[actualWithBal.length-1].lcNow:lcStart;
   const actualLastScu=actualWithBal.length?actualWithBal[actualWithBal.length-1].scuNow:scuStart;
+
+  // Running balances as of TODAY — always current regardless of viewed month
+  const todayStr2=today();
+  const runningActualLc=useMemo(()=>{
+    const lcRD=lcReset?.date||null;
+    let lc=lcRD?parseFloat(lcReset.balance)||0:lcStart;
+    txns.filter(t=>!t.planned&&t.account==="lc"&&(!lcRD||t.date>=lcRD)&&t.date<=todayStr2)
+        .sort((a,b)=>a.date.localeCompare(b.date))
+        .forEach(t=>{lc=Math.round((lc+t.amount)*100)/100;});
+    return lc;
+  },[txns,lcStart,lcReset]);
+  const runningActualScu=useMemo(()=>{
+    const scuRD=scuReset?.date||null;
+    let scu=scuRD?parseFloat(scuReset.balance)||0:scuStart;
+    txns.filter(t=>!t.planned&&t.account==="scu"&&(!scuRD||t.date>=scuRD)&&t.date<=todayStr2)
+        .sort((a,b)=>a.date.localeCompare(b.date))
+        .forEach(t=>{scu=Math.round((scu+t.amount)*100)/100;});
+    return scu;
+  },[txns,scuStart,scuReset]);
+  const runningProjLc=useMemo(()=>{
+    const lcRD=lcReset?.date||null;
+    let lc=lcRD?parseFloat(lcReset.balance)||0:lcStart;
+    [...txns,...autoTxns].filter(t=>t.account==="lc"&&(!lcRD||t.date>=lcRD)&&t.date<=todayStr2)
+        .sort((a,b)=>a.date.localeCompare(b.date))
+        .forEach(t=>{lc=Math.round((lc+t.amount)*100)/100;});
+    return lc;
+  },[txns,autoTxns,lcStart,lcReset]);
+  const runningProjScu=useMemo(()=>{
+    const scuRD=scuReset?.date||null;
+    let scu=scuRD?parseFloat(scuReset.balance)||0:scuStart;
+    [...txns,...autoTxns].filter(t=>t.account==="scu"&&(!scuRD||t.date>=scuRD)&&t.date<=todayStr2)
+        .sort((a,b)=>a.date.localeCompare(b.date))
+        .forEach(t=>{scu=Math.round((scu+t.amount)*100)/100;});
+    return scu;
+  },[txns,autoTxns,scuStart,scuReset]);
+  // Opening balance = running balance at end of day before this month starts
+  const monthOpeningBal=useMemo(()=>{
+    const prefix=`${viewYear}-${pad(viewMonth+1)}`;
+    const prevTxns=withBal.filter(t=>t.date<prefix);
+    const lastPrev=prevTxns.length?prevTxns[prevTxns.length-1]:null;
+    const lcOpen=lastPrev?lastPrev.lcNow:lcStart;
+    const scuOpen=lastPrev?lastPrev.scuNow:scuStart;
+    const prevActual=actualWithBal.filter(t=>t.date<prefix);
+    const lastPrevActual=prevActual.length?prevActual[prevActual.length-1]:null;
+    const lcActualOpen=lastPrevActual?lastPrevActual.lcNow:lcStart;
+    const scuActualOpen=lastPrevActual?lastPrevActual.scuNow:scuStart;
+    return{lcOpen,scuOpen,lcActualOpen,scuActualOpen};
+  },[withBal,actualWithBal,viewYear,viewMonth,lcStart,scuStart]);
+
   const monthSummary=useMemo(()=>{
     const prefix=`${viewYear}-${pad(viewMonth+1)}`;
     const mAll=withBal.filter(t=>t.date.startsWith(prefix));
@@ -1323,7 +1372,7 @@ function App(){
       }
     },
     lcReset,scuReset,onResetChange:(acct,obj)=>{if(acct==="lc"){setLcReset(obj);saveSettings(lcStart,scuStart,obj,scuReset);}else{setScuReset(obj);saveSettings(lcStart,scuStart,lcReset,obj);}},
-    lastLc,lastScu,actualLastLc,actualLastScu,actualWithBal,monthSummary,darkMode,setDarkMode,
+    lastLc,lastScu,actualLastLc,actualLastScu,actualWithBal,monthSummary,monthOpeningBal,darkMode,setDarkMode,
     doExp:()=>doExport(cats,budgets,actuals,goals,assets,totDebt,viewMonth,viewYear,notes),
     trades,addTrade,editTrade,delTrade,tradeAcctStart,
     pushEnabled,pushStatus,enablePushNotifications,disablePushNotifications,
@@ -1359,7 +1408,7 @@ function App(){
             <button onClick={()=>{if(viewMonth===0){setViewMonth(11);setViewYear(y=>y-1);}else setViewMonth(m=>m-1);}} style={{background:T.a+"14",border:`1px solid ${T.a}28`,borderRadius:8,padding:"4px 10px",fontSize:14,color:T.a,cursor:"pointer"}}>‹</button>
             <button onClick={()=>{if(viewMonth===11){setViewMonth(0);setViewYear(y=>y+1);}else setViewMonth(m=>m+1);}} style={{background:T.a+"14",border:`1px solid ${T.a}28`,borderRadius:8,padding:"4px 10px",fontSize:14,color:T.a,cursor:"pointer"}}>›</button>
             {/* Balance chips — running balances carry across all months */}
-            {[{l:acctNames.lc,actual:actualLastLc,proj:lastLc,c:T.a},{l:acctNames.scu,actual:actualLastScu,proj:lastScu,c:T.a2}].map((a,i)=>(
+            {[{l:acctNames.lc,actual:runningActualLc,proj:runningProjLc,c:T.a},{l:acctNames.scu,actual:runningActualScu,proj:runningProjScu,c:T.a2}].map((a,i)=>(
               <div key={i} style={{background:a.c+"12",borderRadius:10,padding:"5px 9px",border:`1px solid ${a.c}28`,textAlign:"right",minWidth:80}}>
                 <div style={{fontSize:8,color:a.c,textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:700,marginBottom:1}}>{a.l}</div>
                 <div style={{fontSize:7,color:T.lt,marginBottom:2,letterSpacing:"0.06em"}}>ACTUAL · RUNNING</div>
@@ -1658,7 +1707,7 @@ function SelectedDayDetail({T,selectedDay,viewYear,viewMonth,withBal,actualWithB
 // ════════════════════════════════════════════════════════════════
 //  CALENDAR PAGE
 // ════════════════════════════════════════════════════════════════
-function CalendarPage({T,viewYear,viewMonth,txnsByDay,monthTxns,withBal,actualWithBal,lcStart,scuStart,commitAuto,revertToAuto,markPaid,revertToPlanned,delTxn,setEditTxnId,editTxnId,editTxn,addTxn,showAddTxn,setShowAddTxn,cats,acctNames}){
+function CalendarPage({T,viewYear,viewMonth,txnsByDay,monthTxns,withBal,actualWithBal,lcStart,scuStart,commitAuto,revertToAuto,markPaid,revertToPlanned,delTxn,setEditTxnId,editTxnId,editTxn,addTxn,showAddTxn,setShowAddTxn,cats,acctNames,monthOpeningBal,acctNames:an}){
   const dim=daysInMonth(viewYear,viewMonth);
   const firstDow=new Date(viewYear,viewMonth,1).getDay();
   const todayStr=new Date().toISOString().split("T")[0];
@@ -1678,6 +1727,20 @@ function CalendarPage({T,viewYear,viewMonth,txnsByDay,monthTxns,withBal,actualWi
           </div>
         ))}
       </div>
+
+      {/* Opening balance from prior month */}
+      {monthOpeningBal&&(
+        <div style={{display:"flex",gap:8,marginBottom:12}}>
+          {[{l:"LC Opening",actual:monthOpeningBal.lcActualOpen,proj:monthOpeningBal.lcOpen,c:T.a},
+            {l:"SCU Opening",actual:monthOpeningBal.scuActualOpen,proj:monthOpeningBal.scuOpen,c:T.a2}].map((a,i)=>(
+            <div key={i} style={{flex:1,background:a.c+"0E",borderRadius:12,padding:"8px 12px",border:`1px solid ${a.c}22`}}>
+              <div style={{fontSize:8,color:a.c,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:2}}>← {a.l}</div>
+              <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:14,fontWeight:700,color:a.c}}>{fmtD(a.actual)}</div>
+              <div style={{fontSize:9,color:T.lt}}>proj {fmtD(a.proj)}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <Card T={T} style={{padding:"14px",marginBottom:12}}>
         <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:6}}>
@@ -1738,9 +1801,20 @@ function CalendarPage({T,viewYear,viewMonth,txnsByDay,monthTxns,withBal,actualWi
 // ════════════════════════════════════════════════════════════════
 //  LEDGER PAGE
 // ════════════════════════════════════════════════════════════════
-function LedgerPage({T,monthTxns,showAddTxn,setShowAddTxn,editTxnId,setEditTxnId,addTxn,delTxn,editTxn,commitAuto,revertToAuto,markPaid,revertToPlanned,acctFilter,setAcctFilter,descFilter,setDescFilter,cats,acctNames}){
+function LedgerPage({T,monthTxns,showAddTxn,setShowAddTxn,editTxnId,setEditTxnId,addTxn,delTxn,editTxn,commitAuto,revertToAuto,markPaid,revertToPlanned,acctFilter,setAcctFilter,descFilter,setDescFilter,cats,acctNames,monthOpeningBal}){
   return(
     <div className="fade">
+      {/* Opening balance from prior month */}
+      {monthOpeningBal&&(
+        <div style={{display:"flex",gap:8,marginBottom:12}}>
+          {[{l:"LC Carry-in",v:monthOpeningBal.lcActualOpen,c:T.a},{l:"SCU Carry-in",v:monthOpeningBal.scuActualOpen,c:T.a2}].map((a,i)=>(
+            <div key={i} style={{flex:1,background:a.c+"0E",borderRadius:12,padding:"8px 12px",border:`1px solid ${a.c}22`}}>
+              <div style={{fontSize:8,color:a.c,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:2}}>← {a.l}</div>
+              <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:14,fontWeight:700,color:a.c}}>{fmtD(a.v)}</div>
+            </div>
+          ))}
+        </div>
+      )}
       {!showAddTxn&&!editTxnId&&(
         <button onClick={()=>setShowAddTxn(true)} style={{width:"100%",marginBottom:12,padding:"11px",borderRadius:14,background:T.a+"10",border:`1.5px dashed ${T.a}45`,fontSize:13,fontWeight:700,color:T.a,cursor:"pointer"}}>
           + Add Transaction
