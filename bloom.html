@@ -834,6 +834,12 @@ function App(){
 
   // loadMonthData — runs when month/year changes. Only loads month-specific data.
   async function loadMonthData(){
+    // Immediately clear to prevent previous month data from bleeding into this month
+    setBudgets({});
+    setActuals({});
+    setDpays({});
+    setNotes("");
+    setGoalPays({});
     try{
       const[bR,pR,nR,gpR]=await Promise.all([
         dbGet(`bud-${viewYear}-${viewMonth}`),
@@ -841,11 +847,17 @@ function App(){
         dbGet(`notes-${viewYear}-${viewMonth}`),
         dbGet(`gpay-${viewYear}-${viewMonth}`),
       ]);
-      const savedB=bR?.budgets||{};
-      const savedA=bR?.actuals||{};
-      const hasAnySaved=Object.keys(savedB).length>0;
-      setBudgets(hasAnySaved?savedB:initB(cats));
-      setActuals(savedA);
+      // If month has saved data, use it. If brand new month, default to recurring planned values.
+      const savedB=bR?.budgets;
+      if(savedB&&Object.keys(savedB).length>0){
+        setBudgets(savedB);
+      } else {
+        // New month — pre-fill planned from recurring defaults (not actuals, just plan)
+        const base=initB(cats);
+        // Will be overridden by syncIncomeToBudget but set a sensible default
+        setBudgets(base);
+      }
+      setActuals(bR?.actuals||{});
       setDpays(pR?.budgets?.p||{});
       setNotes(nR?.budgets?.notes||"");
       setGoalPays(gpR?.budgets?.p||{});
@@ -952,7 +964,7 @@ function App(){
 
   // Budget handlers
   function onB(id,v){
-    const val=parseFloat(v)||0;const b={...budgets,[id]:val};setBudgets(b);sB(b,actuals);
+    const val=parseFloat(v)||0;const b={...budgets,[id]:val};setBudgets(b);sB(b,actuals,viewMonth,viewYear);
     const linked=debts.find(d=>d.catId===id);
     if(linked){const nd=debts.map(d=>d.id===linked.id?{...d,min:val}:d);setDebts(nd);sD(nd);}
   }
@@ -972,11 +984,12 @@ function App(){
     const p={...dpays,[linked.id]:updated};setDpays(p);sP(p);
     const delta=budgetAmt-oldBudgetAmt;
     if(delta!==0){const nd=debts.map(d=>d.id===linked.id?{...d,bal:Math.max(0,d.bal-delta),catId}:d);setDebts(nd);sD(nd);}
+    sB(budgets,actuals,viewMonth,viewYear);
   }
-  function onA(id,v){const val=parseFloat(v)||0;const a={...actuals,[id]:val};setActuals(a);sB(budgets,a);syncDebtPayment(id,val);}
+  function onA(id,v){const val=parseFloat(v)||0;const a={...actuals,[id]:val};setActuals(a);sB(budgets,a,viewMonth,viewYear);syncDebtPayment(id,val);}
   function onQuickAdd(id,amt){
     const add=parseFloat(amt)||0;const val=(actuals[id]||0)+add;
-    const a={...actuals,[id]:val};setActuals(a);sB(budgets,a);syncDebtPayment(id,val);
+    const a={...actuals,[id]:val};setActuals(a);sB(budgets,a,viewMonth,viewYear);syncDebtPayment(id,val);
   }
   function onCatLbl(id,v){const nc=cats.map(c=>c.id===id?{...c,lbl:v}:c);setCats(nc);sCats(nc);}
   function onCatIco(id,v){const nc=cats.map(c=>c.id===id?{...c,ico:v}:c);setCats(nc);sCats(nc);}
@@ -1233,6 +1246,48 @@ function App(){
     alert("✓ Data restored. Your categories and debts are back.");
   }
 
+  // Item 3: Clear actuals for current month only
+  async function onClearActuals(){
+    if(!confirm(`Clear all actual spend amounts for ${MO[viewMonth]} ${viewYear}?\n\nThis only affects this month's actuals — planned amounts and other months are untouched.`))return;
+    const a={};setActuals(a);sB(budgets,a,viewMonth,viewYear);
+  }
+
+  // Item 4: Restore planned amounts from recurring defaults for this month
+  function getPlannedFromRecurring(){
+    // Build planned budgets from category defaults + recurring bills linked to cats
+    const base=initB(cats); // category .def values
+    // Override with recurring bill amounts for linked cats
+    recurringDebts.filter(r=>r.active!==false&&r.catId&&r.amount).forEach(r=>{
+      const existing=base[r.catId]||0;
+      base[r.catId]=existing+(parseFloat(r.amount)||0);
+    });
+    // Income from income streams
+    const monthly=calcMonthlyIncomeFromStreams(incomeStreams,viewYear,viewMonth);
+    Object.entries(monthly).forEach(([k,v])=>{base[k]=v;});
+    return base;
+  }
+  function onRestorePlanned(){
+    if(!confirm(`Restore planned budget for ${MO[viewMonth]} ${viewYear} to your recurring defaults?\n\nActuals are NOT affected.`))return;
+    const planned=getPlannedFromRecurring();
+    setBudgets(planned);sB(planned,actuals,viewMonth,viewYear);
+  }
+
+  // Item 5: Undo stack
+  const undoStack=useRef([]);
+  const MAX_UNDO=20;
+  function pushUndo(label,undoFn){
+    undoStack.current=[{label,fn:undoFn},...undoStack.current].slice(0,MAX_UNDO);
+    setLastUndo(label);
+  }
+  const [lastUndo,setLastUndo]=useState(null);
+  function doUndo(){
+    const top=undoStack.current[0];
+    if(!top)return;
+    undoStack.current=undoStack.current.slice(1);
+    top.fn();
+    setLastUndo(undoStack.current[0]?.label||null);
+  }
+
   const sl={idle:"",saving:"Saving…",saved:"✓ Synced",error:"⚠ Error"}[sync];
   const sc={idle:"transparent",saving:T.a,saved:T.a2,error:T.danger}[sync];
   const NAV=[{id:"dashboard",lbl:"Home",ico:"🏠"},{id:"calendar",lbl:"Calendar",ico:"📅"},{id:"ledger",lbl:"Ledger",ico:"📒"},{id:"budget",lbl:"Budget",ico:"📊"},{id:"trades",lbl:"Trades",ico:"📈"},{id:"plan",lbl:"Plan",ico:"🎯"}];
@@ -1272,7 +1327,7 @@ function App(){
     doExp:()=>doExport(cats,budgets,actuals,goals,assets,totDebt,viewMonth,viewYear,notes),
     trades,addTrade,editTrade,delTrade,tradeAcctStart,
     pushEnabled,pushStatus,enablePushNotifications,disablePushNotifications,
-    onRestoreDefaults,
+    onRestoreDefaults,onClearActuals,onRestorePlanned,doUndo,lastUndo,pushUndo,
     planTab,setPlanTab,
   };
 
@@ -1303,10 +1358,11 @@ function App(){
             {/* Month nav */}
             <button onClick={()=>{if(viewMonth===0){setViewMonth(11);setViewYear(y=>y-1);}else setViewMonth(m=>m-1);}} style={{background:T.a+"14",border:`1px solid ${T.a}28`,borderRadius:8,padding:"4px 10px",fontSize:14,color:T.a,cursor:"pointer"}}>‹</button>
             <button onClick={()=>{if(viewMonth===11){setViewMonth(0);setViewYear(y=>y+1);}else setViewMonth(m=>m+1);}} style={{background:T.a+"14",border:`1px solid ${T.a}28`,borderRadius:8,padding:"4px 10px",fontSize:14,color:T.a,cursor:"pointer"}}>›</button>
-            {/* Balance chips — use user's account names */}
+            {/* Balance chips — running balances carry across all months */}
             {[{l:acctNames.lc,actual:actualLastLc,proj:lastLc,c:T.a},{l:acctNames.scu,actual:actualLastScu,proj:lastScu,c:T.a2}].map((a,i)=>(
               <div key={i} style={{background:a.c+"12",borderRadius:10,padding:"5px 9px",border:`1px solid ${a.c}28`,textAlign:"right",minWidth:80}}>
-                <div style={{fontSize:8,color:a.c,textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:700,marginBottom:2}}>{a.l}</div>
+                <div style={{fontSize:8,color:a.c,textTransform:"uppercase",letterSpacing:"0.1em",fontWeight:700,marginBottom:1}}>{a.l}</div>
+                <div style={{fontSize:7,color:T.lt,marginBottom:2,letterSpacing:"0.06em"}}>ACTUAL · RUNNING</div>
                 <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:13,fontWeight:700,color:a.c}}>{fmtD(a.actual)}</div>
                 <div style={{fontSize:9,color:a.proj<a.actual?T.danger:T.lt,marginTop:1}}>▸ {fmtD(a.proj)}</div>
               </div>
@@ -1777,7 +1833,7 @@ function LedgerPage({T,monthTxns,showAddTxn,setShowAddTxn,editTxnId,setEditTxnId
 // ════════════════════════════════════════════════════════════════
 //  BUDGET PAGE
 // ════════════════════════════════════════════════════════════════
-function BudgetPage({T,cats,budgets,actuals,debts,onB,onA,onQuickAdd,onCatLbl,onCatIco,onCatRec,onCatDel,onCatAdd,totInc,totBud,totAct,irregIncome,pastIncome,effectiveIncome,onIrreg}){
+function BudgetPage({T,cats,budgets,actuals,debts,onB,onA,onQuickAdd,onCatLbl,onCatIco,onCatRec,onCatDel,onCatAdd,totInc,totBud,totAct,irregIncome,pastIncome,effectiveIncome,onIrreg,onRestorePlanned,onClearActuals,doUndo,lastUndo}){
   const [editMode,setEditMode]=useState(false);
   const rem=totInc-totAct;
   const surplus=totInc-totBud;
@@ -1790,13 +1846,18 @@ function BudgetPage({T,cats,budgets,actuals,debts,onB,onA,onQuickAdd,onCatLbl,on
   const pct=totInc>0?Math.min(totAct/totInc*100,100):0;
   return(
     <div className="fade">
-      <Row style={{marginBottom:14}}>
+      <Row style={{marginBottom:10}}>
         <div>
           <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:26,fontWeight:600,color:T.text}}>Budget Planner</div>
           <div style={{fontSize:12,color:T.sub,marginTop:2}}>{editMode?"✏️ Edit mode":"Planned vs. actual"}</div>
         </div>
         <Btn T={T} onClick={()=>setEditMode(e=>!e)} accent={editMode?T.a2:T.a} style={{padding:"7px 13px",fontSize:12}}>{editMode?"✓ Done":"✏️ Edit"}</Btn>
       </Row>
+      <div style={{display:"flex",gap:7,marginBottom:12,flexWrap:"wrap"}}>
+        <button onClick={onRestorePlanned} style={{flex:1,padding:"8px 10px",borderRadius:10,border:`1.5px solid ${T.a}35`,background:`${T.a}10`,fontSize:11,fontWeight:700,color:T.a,cursor:"pointer"}}>↺ Restore Planned</button>
+        <button onClick={onClearActuals} style={{flex:1,padding:"8px 10px",borderRadius:10,border:`1.5px solid ${T.danger}30`,background:`${T.danger}08`,fontSize:11,fontWeight:700,color:T.danger,cursor:"pointer"}}>🗑 Clear Actuals</button>
+        {lastUndo&&<button onClick={doUndo} style={{flex:1,padding:"8px 10px",borderRadius:10,border:`1.5px solid ${T.a3}35`,background:`${T.a3}10`,fontSize:11,fontWeight:700,color:T.a3,cursor:"pointer"}}>↩ Undo</button>}
+      </div>
 
       {/* Variable income toggle */}
       <Card T={T} style={{padding:"13px 15px",marginBottom:13,border:`1px solid ${T.a2}25`}}>
