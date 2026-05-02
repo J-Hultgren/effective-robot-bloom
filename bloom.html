@@ -1051,7 +1051,18 @@ function App(){
   function onIrreg(on,past){setIrregIncome(on);setPastIncome(past);sIR({on,past});}
 
   // Ledger handlers
-  const autoTxns=useMemo(()=>generateAutoTxns(viewYear,viewMonth,recurringDebts,incomeStreams),[viewYear,viewMonth,recurringDebts,incomeStreams]);
+  const autoTxns=useMemo(()=>{
+    // Generate auto txns for 6-month window: 3 months back through 3 months forward
+    // This ensures the ledger is continuous when navigating between months
+    const all=[];
+    for(let offset=-3;offset<=3;offset++){
+      let m=viewMonth+offset, y=viewYear;
+      while(m<0){m+=12;y--;}
+      while(m>11){m-=12;y++;}
+      all.push(...generateAutoTxns(y,m,recurringDebts,incomeStreams));
+    }
+    return all;
+  },[viewYear,viewMonth,recurringDebts,incomeStreams]);
   const allTxns=useMemo(()=>{
     const manualKeys=new Set(txns.map(t=>t.date+"|"+t.desc+"|"+t.account));
     const filteredAuto=autoTxns.filter(a=>!manualKeys.has(a.date+"|"+a.desc+"|"+a.account));
